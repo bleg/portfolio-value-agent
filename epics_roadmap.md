@@ -40,7 +40,7 @@ Every epic includes a `pytest` task, not just Epic 1 — "deterministic executio
 **Goal:** Deliver the two things that make this a "multi-broker" tool with "self-healing" data ingestion — both are headline architecture claims and belong early, not as a Phase-5 afterthought.
 
 *   **Tasks:**
-    1. Build `src/parsers/broker_llm.py`: the `gpt-4o-mini` self-healing fallback. On a parser exception, pass the new CSV headers/sample rows to the LLM, have it map columns to the internal schema, and cache the mapping (to a local file or DB stub) for future runs.
+    1. Build `src/parsers/broker_llm.py`: the `gpt-4o-mini` self-healing fallback. On a parser exception, pass the new CSV headers/sample rows to the LLM, have it map columns to the internal schema, and cache the mapping (to a local file or DB stub) for future runs. Reuse `src/resilience.py`'s `resilient_tool` decorator (built in Epic 2) for this call's retry-with-backoff rather than writing bespoke retry logic.
     2. Add a second broker adapter (Interactive Brokers or Schwab CSV export) to `base_parser.py`, using the deterministic path first and falling back to `broker_llm.py` on unrecognized formats. Without this, "multi-broker" is asserted in the README but never actually exercised.
     3. Fire `telemetry.log_event("schema_healed", broker=..., fields_mapped=...)` whenever the LLM fallback path is used (not the deterministic path) — this is the event named in the GTM/KPI doc and the fallback is the only place it's meaningful to log.
     4. Write `pytest` tests: a deliberately malformed/renamed-column CSV that must be caught by the fallback and correctly mapped, plus a test that the second broker's real export format parses deterministically.
@@ -63,7 +63,7 @@ Every epic includes a `pytest` task, not just Epic 1 — "deterministic executio
 **Goal:** Build the `gpt-4o`-powered ReAct agent in isolation, against the Quant Agent's output from Epic 4. Kept separate from the Supervisor because ReAct tool-calling loops are the most iterative, hardest-to-debug part of the build and deserve their own focused session.
 
 *   **Tasks:**
-    1. Build `risk_agent.py`'s risk-check path: detect anomalies (e.g. FCF Yield < 3%) and autonomously call `sec_edgar_lookup` / `duckduckgo_search` to investigate why.
+    1. Build `risk_agent.py`'s risk-check path: detect anomalies (e.g. FCF Yield < 3%) and autonomously call `sec_edgar_lookup` / `duckduckgo_search` to investigate why. Note the failure contract from Epic 2: an exhausted MCP tool call raises `resilience.McpToolError`, it does not return an `{"error": ...}` dict — catch this exception at the agent-node boundary and feed the error text back to the LLM as an observation.
     2. Build the performance-attribution path: explain over/underperformance vs. S&P 500 (e.g. sector allocation mismatch).
     3. Write `pytest` tests that mock MCP tool responses and assert the agent calls the *correct* tool for a given anomaly type (not full end-to-end correctness of LLM prose, which isn't unit-testable — assert on tool-call routing).
     4. Build a small LangSmith eval dataset (per CLAUDE.md Testing & Evals): 3-5 seeded portfolios with known, hand-picked anomalies. Run the agent against each and grade on whether the right anomaly was flagged and the right tool called — not prose quality. This is the eval layer pytest can't cover.

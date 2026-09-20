@@ -91,7 +91,7 @@ portfolio-value-agent/
 ├── README.md               # Architecture diagram, GTM strategy, and live Streamlit demo link
 ├── LICENSE                 # MIT/Apache 2.0 — required for the open-core PLG tier (Section 5A)
 ├── .env.example            # Template for API keys (OPENAI_API_KEY, etc.)
-├── requirements.txt        # langgraph, openai, pandas, yfinance, mcp, streamlit, plotly, fastapi, pytest
+├── requirements.txt        # langgraph, openai, pandas, yfinance, mcp, tenacity, requests, ddgs, streamlit, plotly, fastapi, pytest
 ├── src/
 │   ├── __init__.py
 │   ├── app.py              # Phase 1: Streamlit Web UI (CSV upload, S&P 500 charts, AI audit viewer)
@@ -99,6 +99,7 @@ portfolio-value-agent/
 │   ├── state.py            # LangGraph TypedDict state
 │   ├── db_controller.py    # Safe, deterministic database manager (SQLite/PostgreSQL)
 │   ├── mcp_server.py       # MCP Server hosting yfinance, S&P 500, DuckDuckGo, SEC tools
+│   ├── resilience.py       # Retry-with-backoff + timeout decorator for MCP tool calls (Section 3B); reusable by other epics (e.g. Epic 3's LLM calls)
 │   ├── telemetry.py        # Product analytics event logging (Section 5B KPI events)
 │   ├── parsers/
 │   │   ├── base_parser.py    # Abstract base class / Adapter (DEGIRO, IBKR/Schwab)
