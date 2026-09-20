@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, time
 from decimal import Decimal
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel
 
@@ -79,9 +79,56 @@ class QuantMetrics(BaseModel):
     unresolved_isins: list[str]
 
 
+class ToolCallRecord(BaseModel):
+    """One tool invocation captured from a ReAct loop (Epic 5's risk_agent),
+    kept for standalone inspectability and tool-routing test/eval
+    assertions - not surfaced to end users directly."""
+
+    tool_name: str
+    tool_input: dict
+    output_summary: str
+
+
+class AnomalyFinding(BaseModel):
+    """One deterministically-detected anomaly (risk_agent.detect_anomalies),
+    enriched with the ReAct agent's qualitative investigation. The three
+    anomaly_type values and their thresholds are illustrative for this demo,
+    not investment advice - see risk_agent.py's threshold constants."""
+
+    ticker: str
+    anomaly_type: Literal["low_fcf_yield", "high_debt_to_equity", "negative_pe"]
+    metric_value: float
+    threshold: float
+    explanation: str
+    tool_calls: list[ToolCallRecord]
+
+
+class PerformanceAttribution(BaseModel):
+    """Qualitative explanation of portfolio vs. benchmark performance.
+    portfolio_return_pct/benchmark_return_pct/relative_return_pct are copied
+    from QuantMetrics (deterministic) - the LLM only supplies `explanation`,
+    never recomputes the numbers (CLAUDE.md Section 3C)."""
+
+    portfolio_return_pct: float
+    benchmark_return_pct: float
+    relative_return_pct: float
+    explanation: str
+    tool_calls: list[ToolCallRecord]
+
+
+class RiskReport(BaseModel):
+    """Epic 5's output: src.agents.risk_agent.run_risk_agent's return value,
+    attached to PortfolioState.risk_report."""
+
+    as_of: date
+    anomalies: list[AnomalyFinding]
+    performance_attribution: PerformanceAttribution
+
+
 class PortfolioState(TypedDict, total=False):
     transactions: list[Transaction]
     broker: str
     base_currency: str
     skipped_rows: list[dict]
     quant_metrics: QuantMetrics
+    risk_report: RiskReport

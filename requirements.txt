@@ -6,4 +6,16 @@ mcp>=2,<3
 tenacity
 requests
 ddgs
-openai>=1,<2
+# openai's pin is driven by langchain-openai's own dependency floor
+# (openai>=2.45,<4 as of langchain-openai 1.6.2) - broker_llm.py's raw
+# `OpenAI().chat.completions.create(...)` usage was verified compatible
+# with openai 3.x before bumping this.
+openai>=2.45,<4
+# langchain.agents.create_agent (not langgraph.prebuilt.create_react_agent,
+# which is deprecated as of langgraph 1.0 in favor of this) powers Epic 5's
+# ReAct risk agent.
+langgraph>=1.2,<2
+langchain>=1.0,<2
+langchain-core>=1.6,<2
+langchain-openai>=1.6,<2
+langsmith>=0.13,<1
