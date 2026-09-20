@@ -29,7 +29,7 @@ This project serves as a portfolio demonstration piece for Senior Product Manage
 ### A. Self-Healing CSV Parsing Engine (`/src/parsers/`)
 - Implements an **LLM-Assisted Fallback Pattern** to ingest transactions and holdings from multiple brokers (starting with DEGIRO, extending to Interactive Brokers/Schwab) without brittle hardcoding.
 - **Deterministic Primary Path:** Uses Pandas/Pydantic to parse CSVs against known column mappings — no LLM call, sub-second, for any recognized broker format.
-- **Agentic Self-Healing:** If a broker changes their CSV export format, the system catches the exception and passes the new headers/sample rows to `gpt-4o-mini`. The LLM dynamically maps the new columns to the required internal schema (Ticker, Cost Basis, Date) and caches the updated mapping to the database for future runs.
+- **Agentic Self-Healing:** If a broker changes their CSV export format, the system catches the exception and passes the new header — plus locally-computed, value-free type tags per column, never real cell values — to `gpt-4o-mini`. The LLM dynamically maps the new columns to the required internal schema (Ticker, Cost Basis, Date) and caches the updated mapping to a local JSON file for future runs (upgraded to the database once `db_controller.py` exists in Epic 7).
 - **Strategic Value:** Delivers "intelligent error correction" to eliminate ongoing engineering maintenance for data integration pipelines.
 - **PII Scrubbing (`/src/parsers/pii_scrubber.py`):** Runs immediately after parsing, before data enters `PortfolioState`. Account names and internal broker IDs are stripped locally — only stock tickers and aggregate share counts are ever sent to external LLMs.
 

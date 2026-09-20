@@ -115,19 +115,13 @@ def _date_range(transactions: list[Transaction]) -> list[str] | None:
     return [dates[0].isoformat(), dates[-1].isoformat()]
 
 
-def parse_degiro_csv(path: str | Path) -> PortfolioState:
-    path = Path(path)
-    header = _read_header(path)
-    if header != EXPECTED_DEGIRO_HEADER:
-        raise UnrecognizedBrokerFormatError(
-            f"{path.name} header does not match the known DEGIRO transactions "
-            f"export format (got {header!r})"
-        )
+def _build_transactions(df: pd.DataFrame, broker: str) -> tuple[list[Transaction], list[dict]]:
+    """Parse a dataframe already renamed to INTERNAL_COLUMNS into Transactions.
 
-    df = pd.read_csv(
-        path, skiprows=1, names=INTERNAL_COLUMNS, dtype=str, keep_default_na=False
-    )
-
+    Shared by the deterministic DEGIRO path and Epic 3's broker_llm.py LLM
+    fallback path — this function only knows the internal schema, never any
+    broker-specific header text.
+    """
     transactions: list[Transaction] = []
     skipped_rows: list[dict] = []
 
@@ -168,7 +162,7 @@ def parse_degiro_csv(path: str | Path) -> PortfolioState:
                 isin=isin,
                 ticker=ticker,
                 product_name=row["product_name"],
-                broker="DEGIRO",
+                broker=broker,
                 trade_date=trade_date,
                 trade_time=trade_time,
                 quantity=quantity,
@@ -182,6 +176,24 @@ def parse_degiro_csv(path: str | Path) -> PortfolioState:
                 is_corporate_action=(price_local == 0 and total_eur == 0),
             )
         )
+
+    return transactions, skipped_rows
+
+
+def parse_degiro_csv(path: str | Path) -> PortfolioState:
+    path = Path(path)
+    header = _read_header(path)
+    if header != EXPECTED_DEGIRO_HEADER:
+        raise UnrecognizedBrokerFormatError(
+            f"{path.name} header does not match the known DEGIRO transactions "
+            f"export format (got {header!r})"
+        )
+
+    df = pd.read_csv(
+        path, skiprows=1, names=INTERNAL_COLUMNS, dtype=str, keep_default_na=False
+    )
+
+    transactions, skipped_rows = _build_transactions(df, broker="DEGIRO")
 
     state: PortfolioState = {
         "transactions": transactions,

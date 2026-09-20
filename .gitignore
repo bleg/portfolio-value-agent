@@ -8,6 +8,7 @@ sample_transactions/
 # Local runtime artifacts
 *.db
 telemetry.jsonl
+schema_cache.json
 
 # Python
 __pycache__/

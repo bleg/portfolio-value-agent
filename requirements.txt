@@ -6,3 +6,4 @@ mcp>=2,<3
 tenacity
 requests
 ddgs
+openai>=1,<2

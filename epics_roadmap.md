@@ -36,15 +36,16 @@ Every epic includes a `pytest` task, not just Epic 1 — "deterministic executio
 
 ---
 
-## Epic 3: Self-Healing Parsing & Multi-Broker Support
-**Goal:** Deliver the two things that make this a "multi-broker" tool with "self-healing" data ingestion — both are headline architecture claims and belong early, not as a Phase-5 afterthought.
+## Epic 3: Self-Healing CSV Parsing (Multi-Broker Adapter Deferred)
+**Goal:** Deliver the "self-healing data ingestion" headline claim: when a broker's CSV export format changes, the system heals itself via an LLM column-mapping fallback instead of hard-failing.
 
 *   **Tasks:**
-    1. Build `src/parsers/broker_llm.py`: the `gpt-4o-mini` self-healing fallback. On a parser exception, pass the new CSV headers/sample rows to the LLM, have it map columns to the internal schema, and cache the mapping (to a local file or DB stub) for future runs. Reuse `src/resilience.py`'s `resilient_tool` decorator (built in Epic 2) for this call's retry-with-backoff rather than writing bespoke retry logic.
-    2. Add a second broker adapter (Interactive Brokers or Schwab CSV export) to `base_parser.py`, using the deterministic path first and falling back to `broker_llm.py` on unrecognized formats. Without this, "multi-broker" is asserted in the README but never actually exercised.
-    3. Fire `telemetry.log_event("schema_healed", broker=..., fields_mapped=...)` whenever the LLM fallback path is used (not the deterministic path) — this is the event named in the GTM/KPI doc and the fallback is the only place it's meaningful to log.
-    4. Write `pytest` tests: a deliberately malformed/renamed-column CSV that must be caught by the fallback and correctly mapped, plus a test that the second broker's real export format parses deterministically.
-*   **Definition of Done:** Feeding the parser a CSV from the second broker, and a DEGIRO CSV with intentionally renamed columns, both produce a correctly mapped `PortfolioState` — one via the deterministic path, one via the LLM fallback.
+    1. Build `src/parsers/broker_llm.py`: the `gpt-4o-mini` self-healing fallback. On a parser exception, pass the new CSV's header (plus locally-computed, value-free type tags per column — never real cell values, since PII columns can't be identified by name until the mapping is known) to the LLM, have it map columns to the internal schema, and cache the mapping to a local JSON file for future runs. Reuse `src/resilience.py`'s `resilient_tool` decorator (built in Epic 2) for this call's retry-with-backoff rather than writing bespoke retry logic. Reject an oversized/adversarial header (too many columns, or an implausibly long column name) before ever calling the LLM, and cap the sample read used for type-profiling to a small fixed row count regardless of total file size, so cost and prompt-injection surface never scale with an uploaded file's size.
+    2. Fire `telemetry.log_event("schema_healed", broker=..., fields_mapped=...)` only when the LLM is actually called (a cache miss) — not on cache hits, and not on the deterministic path — this is the event named in the GTM/KPI doc and only meaningful when healing actually occurred.
+    3. Write `pytest` tests: a deliberately renamed-column DEGIRO CSV caught by the fallback and correctly mapped (LLM call mocked), a cache-hit test confirming a second parse of the same renamed header doesn't call the LLM again, a malformed-LLM-response test confirming retry-then-`McpToolError` behavior, and header-shape-guardrail tests confirming an oversized/adversarial header is rejected before any LLM call.
+*   **Definition of Done:** Feeding the parser a DEGIRO CSV with intentionally renamed columns produces a correctly mapped `PortfolioState` via the LLM fallback, with `schema_healed` firing on the first (cache-miss) parse only, and header-shape guardrails test-verified.
+
+> **Deferred:** Adding a second real broker adapter (e.g. Interactive Brokers or Schwab) to `base_parser.py` — so "multi-broker" is actually exercised, not just asserted — is deferred to a later session. It will also be the first real test of the fallback against genuinely different row-value conventions (different date/decimal formats), not just a renamed DEGIRO header.
 
 ---
 
