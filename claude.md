@@ -12,7 +12,7 @@ This project serves as a portfolio demonstration piece for Senior Product Manage
 
 ## 2. Tech Stack & Frameworks
 - **Language:** Python 3.10+
-- **Agent Framework:** LangGraph (StateGraph) for multi-agent orchestration.
+- **Agent Framework:** LangGraph (StateGraph) for multi-agent orchestration. Epic 5's ReAct agent is built with `langchain.agents.create_agent` (the `langchain` package, which compiles to a LangGraph `StateGraph` internally) rather than `langgraph.prebuilt.create_react_agent` — the latter was deprecated in favor of the former as of `langgraph` 1.0.
 - **Primary Models (OpenAI-native):** 
   - `gpt-4o-mini`: Fast JSON parsing, tool routing, schema validation, and error correction.
   - `gpt-4o`: Deep qualitative value audit synthesis, SEC filing analysis, and performance attribution.
@@ -43,10 +43,11 @@ Data connections are abstracted into an MCP Server, decoupling the reasoning eng
 - **Resilience:** All external calls (yfinance, SEC EDGAR, DuckDuckGo) are known to rate-limit or fail intermittently. Each tool wraps its call in a retry-with-backoff and a timeout, and emits the `mcp_tool_failure` telemetry event (Section 5B) on exhaustion so failures are visible in product analytics rather than surfacing only as a stack trace.
 
 ### C. Multi-Agent Orchestrator (`/src/agents/`)
-- **The Quant Agent (Deterministic Execution):** Gathers ticker and index data via MCP. Runs deterministic Benjamin Graham math (Weighted P/E, Cost Basis, Net Return) AND calculates relative benchmark performance (Time-Weighted Return vs. S&P 500). *CRITICAL RULE: Never let the LLM calculate math or performance percentages.* Output is pushed directly to State via `Holding`/`QuantMetrics` (`src/state.py`). Uses average-cost lot accounting; `McpToolError`/`ValueError` (e.g. an oversell) propagate uncaught rather than being handled here — Epic 6's Supervisor is the catch boundary, matching the Risk Agent's contract in Section 3C below. Dividends aren't captured anywhere upstream yet, so Net Return/TWR understate true return for dividend-paying holdings until a future epic adds dividend-row parsing to the parsers in Section 3A.
-- **The Risk & Performance Analyst Agent (ReAct Pattern):** Powered by `gpt-4o`. Reviews the Quant Agent's output. 
-  - *Risk Check:* If an anomaly is detected (e.g., FCF Yield drops below 3%), it autonomously searches web/SEC tools to determine *why*.
-  - *Performance Attribution:* Evaluates why the portfolio over/underperformed the S&P 500 (e.g., sector allocation mismatch).
+- **The Quant Agent (Deterministic Execution):** Gathers ticker and index data via MCP. Runs deterministic Benjamin Graham math (Weighted P/E, Cost Basis, Net Return) AND calculates relative benchmark performance (Time-Weighted Return vs. S&P 500). *CRITICAL RULE: Never let the LLM calculate math or performance percentages.* Output is pushed directly to State via `Holding`/`QuantMetrics` (`src/state.py`). Uses average-cost lot accounting; `McpToolError`/`ValueError` (e.g. an oversell) propagate uncaught rather than being handled here — Epic 6's Supervisor is the catch boundary (contrast the Risk Agent below, which catches MCP tool failures itself). Dividends aren't captured anywhere upstream yet, so Net Return/TWR understate true return for dividend-paying holdings until a future epic adds dividend-row parsing to the parsers in Section 3A.
+- **The Risk & Performance Analyst Agent (ReAct Pattern):** Powered by `gpt-4o`, via two independent `create_agent` tool-calling loops (risk-check, performance-attribution) sharing `sec_edgar_lookup`/`duckduckgo_search` as LangChain tools. Reviews the Quant Agent's output.
+  - *Risk Check:* Anomaly detection itself is deterministic Python (`risk_agent.detect_anomalies`), not LLM math, consistent with the Quant Agent's rule above — it flags FCF Yield < 3%, debt-to-equity > 2.0, or a negative P/E directly off `Holding`'s already-computed fields, no re-fetching. One ReAct investigation runs per flagged holding to determine *why*.
+  - *Performance Attribution:* One ReAct investigation explains why the portfolio over/underperformed the S&P 500 (e.g., sector allocation mismatch) — there's no sector field in state, so this also requires tool calls, not just arithmetic on `QuantMetrics`.
+  - *Failure contract:* unlike the Quant Agent, `McpToolError`/`RuntimeError` from a tool call are caught inside the agent's own LangChain tool wrappers and fed back to the LLM as a text observation, so the ReAct loop keeps reasoning instead of crashing. Only a missing `quant_metrics` (`ValueError`) or a `ChatOpenAI`-level failure (auth/network) propagates uncaught to Epic 6's Supervisor.
 - **The Supervisor Agent:** Evaluates all data, routes to final formatting, or triggers the Human-In-The-Loop (HITL) breakpoint.
 
 ### D. Data Governance & Multi-Tenant Security (`/src/db_controller.py`)
@@ -80,7 +81,7 @@ Data connections are abstracted into an MCP Server, decoupling the reasoning eng
 
 ### B. Telemetry & KPIs
 - **Product Analytics (`/src/telemetry.py`):** A single lightweight logging module, called from the Supervisor graph and `db_controller.py` at each triggering point, so events aren't scattered ad hoc across agent files. Logs key product usage metrics alongside engineering traces.
-- **Key Events Tracked:** `portfolio_ingested`, `schema_healed`, `benchmark_compared`, `mcp_tool_failure`, `hitl_override_triggered`, `report_exported`.
+- **Key Events Tracked:** `portfolio_ingested`, `schema_healed`, `benchmark_compared`, `risk_audit_completed`, `mcp_tool_failure`, `hitl_override_triggered`, `report_exported`.
 - **AI Success Metrics:** "HITL Acceptance Rate" (tracking if users trust the AI's risk detection) and "Time-to-Value" (time from CSV upload to final benchmarked report).
 
 ---
@@ -91,7 +92,7 @@ portfolio-value-agent/
 ├── README.md               # Architecture diagram, GTM strategy, and live Streamlit demo link
 ├── LICENSE                 # MIT/Apache 2.0 — required for the open-core PLG tier (Section 5A)
 ├── .env.example            # Template for API keys (OPENAI_API_KEY, etc.)
-├── requirements.txt        # langgraph, openai, pandas, yfinance, mcp, tenacity, requests, ddgs, streamlit, plotly, fastapi, pytest
+├── requirements.txt        # langgraph, langchain, langchain-openai, langsmith, openai, pandas, yfinance, mcp, tenacity, requests, ddgs, streamlit, plotly, fastapi, pytest
 ├── src/
 │   ├── __init__.py
 │   ├── app.py              # Phase 1: Streamlit Web UI (CSV upload, S&P 500 charts, AI audit viewer)
