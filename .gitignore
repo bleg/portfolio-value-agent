@@ -1,0 +1,17 @@
+# Real broker exports (sensitive personal trade history) — never commit these
+degiro_transactions.csv
+sample_transactions/
+
+# Secrets
+.env
+
+# Local runtime artifacts
+*.db
+telemetry.jsonl
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
