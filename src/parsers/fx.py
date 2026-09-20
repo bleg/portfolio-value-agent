@@ -18,6 +18,8 @@ from decimal import Decimal
 
 import yfinance as yf
 
+from src.resilience import resilient_tool
+
 
 class FxRateUnavailableError(Exception):
     """Raised when no historical FX data can be found for a pair/date."""
@@ -32,3 +34,26 @@ def get_historical_fx_rate(pair: str, on_date: date) -> Decimal:
         raise FxRateUnavailableError(f"No FX data for {pair} around {on_date}")
     last_close = history["Close"].iloc[-1]
     return Decimal(str(round(float(last_close), 6)))
+
+
+@resilient_tool(tool_name="fx_history")
+def get_fx_history(ticker: str, period: str = "max") -> list[dict]:
+    """Historical close-price series for an FX pair (e.g. "EURUSD=X").
+
+    Used by Epic 4's quant_agent to convert multi-currency holdings to EUR at
+    arbitrary historical dates (TWR sub-period breakpoints), where a single
+    point-in-time lookup via `get_historical_fx_rate` isn't enough. Same
+    `{"date": iso, "close": float}` shape as `mcp_server._price_history`, so
+    both can share a single on-or-before lookup helper.
+
+    The parameter is named `ticker` (not `pair`) so `resilience.resilient_tool`'s
+    ticker-extraction (which inspects the signature for a `ticker` argument)
+    attaches it to `mcp_tool_failure` telemetry on exhaustion.
+    """
+    history = yf.Ticker(ticker).history(period=period, timeout=5.0)
+    if history.empty:
+        raise ValueError(f"No FX history available for {ticker!r}")
+    return [
+        {"date": index.date().isoformat(), "close": round(float(row["Close"]), 6)}
+        for index, row in history.iterrows()
+    ]

@@ -35,8 +35,53 @@ class Transaction(BaseModel):
     is_corporate_action: bool = False
 
 
+class Holding(BaseModel):
+    """A currently-held, aggregated position (Epic 4's quant_agent output).
+
+    Cost basis uses average-cost lot accounting. Raw per-holding fundamentals
+    (pe_ratio/pb_ratio/debt_to_equity/fcf_yield) are surfaced unweighted, not
+    just via the portfolio-level `QuantMetrics.weighted_pe` aggregate, because
+    Epic 5's Risk Agent needs per-holding fcf_yield for its anomaly check.
+    """
+
+    ticker: str
+    isin: str
+    quantity: int
+    avg_cost_basis_eur: Decimal
+    total_cost_basis_eur: Decimal
+    current_price_eur: Decimal
+    market_value_eur: Decimal
+    unrealized_return_pct: float
+    pe_ratio: float | None
+    pb_ratio: float | None
+    debt_to_equity: float | None
+    fcf_yield: float | None
+
+
+class QuantMetrics(BaseModel):
+    """Deterministic valuation output of Epic 4's quant_agent. No LLM ever
+    computes a number here (CLAUDE.md Section 3C).
+
+    Known limitation: dividends aren't captured anywhere upstream yet (no
+    parser support), so net_return_pct/twr_pct understate true return for
+    dividend-paying holdings until a future epic adds dividend-row parsing.
+    """
+
+    as_of: date
+    holdings: list[Holding]
+    total_cost_basis_eur: Decimal
+    total_market_value_eur: Decimal
+    weighted_pe: float | None
+    net_return_pct: float
+    twr_pct: float
+    benchmark_ticker: str
+    benchmark_return_pct: float
+    unresolved_isins: list[str]
+
+
 class PortfolioState(TypedDict, total=False):
     transactions: list[Transaction]
     broker: str
     base_currency: str
     skipped_rows: list[dict]
+    quant_metrics: QuantMetrics

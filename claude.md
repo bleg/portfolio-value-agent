@@ -43,7 +43,7 @@ Data connections are abstracted into an MCP Server, decoupling the reasoning eng
 - **Resilience:** All external calls (yfinance, SEC EDGAR, DuckDuckGo) are known to rate-limit or fail intermittently. Each tool wraps its call in a retry-with-backoff and a timeout, and emits the `mcp_tool_failure` telemetry event (Section 5B) on exhaustion so failures are visible in product analytics rather than surfacing only as a stack trace.
 
 ### C. Multi-Agent Orchestrator (`/src/agents/`)
-- **The Quant Agent (Deterministic Execution):** Gathers ticker and index data via MCP. Runs deterministic Benjamin Graham math (Weighted P/E, Cost Basis, Net Return) AND calculates relative benchmark performance (Time-Weighted Return vs. S&P 500). *CRITICAL RULE: Never let the LLM calculate math or performance percentages.* Output is pushed directly to State.
+- **The Quant Agent (Deterministic Execution):** Gathers ticker and index data via MCP. Runs deterministic Benjamin Graham math (Weighted P/E, Cost Basis, Net Return) AND calculates relative benchmark performance (Time-Weighted Return vs. S&P 500). *CRITICAL RULE: Never let the LLM calculate math or performance percentages.* Output is pushed directly to State via `Holding`/`QuantMetrics` (`src/state.py`). Uses average-cost lot accounting; `McpToolError`/`ValueError` (e.g. an oversell) propagate uncaught rather than being handled here — Epic 6's Supervisor is the catch boundary, matching the Risk Agent's contract in Section 3C below. Dividends aren't captured anywhere upstream yet, so Net Return/TWR understate true return for dividend-paying holdings until a future epic adds dividend-row parsing to the parsers in Section 3A.
 - **The Risk & Performance Analyst Agent (ReAct Pattern):** Powered by `gpt-4o`. Reviews the Quant Agent's output. 
   - *Risk Check:* If an anomaly is detected (e.g., FCF Yield drops below 3%), it autonomously searches web/SEC tools to determine *why*.
   - *Performance Attribution:* Evaluates why the portfolio over/underperformed the S&P 500 (e.g., sector allocation mismatch).
@@ -104,9 +104,10 @@ portfolio-value-agent/
 │   ├── parsers/
 │   │   ├── base_parser.py    # Abstract base class / Adapter (DEGIRO, IBKR/Schwab)
 │   │   ├── broker_llm.py     # Self-healing LLM schema mapper (gpt-4o-mini)
+│   │   ├── fx.py             # Point-in-time FX rate + historical FX series lookups (the latter used by Epic 4's TWR multi-currency valuation)
 │   │   └── pii_scrubber.py   # Strips account names/broker IDs before data reaches state (Section 3A/D)
 │   └── agents/
-│       ├── quant_agent.py      # Deterministic math node (Valuation metrics & S&P 500 TWR calculations)
+│       ├── quant_agent.py      # Deterministic math node — Weighted P/E, Cost Basis, Net Return, TWR vs S&P 500 (average-cost lot accounting; see Section 3C)
 │       ├── risk_agent.py       # ReAct tool-calling agent (gpt-4o attribution & risk audit)
 │       └── supervisor.py       # Graph routing & HITL breakpoints
 ├── tests/
