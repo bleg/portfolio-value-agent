@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from src import db_controller
-from src.parsers import broker_llm
+from src.parsers import broker_llm, isin_resolver
 from src.parsers.base_parser import INTERNAL_COLUMNS
 from src.parsers.broker_llm import (
     MAX_HEADER_CELL_LENGTH,
@@ -23,6 +23,13 @@ FIXTURE = Path(__file__).parent / "fixtures" / "degiro_renamed_columns.csv"
 @pytest.fixture(autouse=True)
 def _no_real_sleep(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda seconds: None)
+
+
+@pytest.fixture(autouse=True)
+def _stub_isin_resolver(monkeypatch):
+    """Without this, any fixture ISIN missing from the static ISIN_TO_TICKER
+    table would trigger a real OpenFIGI/yfinance network call during tests."""
+    monkeypatch.setattr(isin_resolver, "resolve_isins", lambda isin_currency_map: {})
 
 
 @pytest.fixture

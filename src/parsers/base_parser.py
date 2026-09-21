@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.parsers import isin_resolver
 from src.parsers.pii_scrubber import scrub_row
 from src.state import PortfolioState, Transaction
 from src.telemetry import log_event
@@ -37,11 +38,11 @@ INTERNAL_COLUMNS = [
     "value_eur", "exchange_rate", "autofx_fee", "fees_eur", "total_eur", "order_id",
 ]
 
-# Known single-stock ISIN -> ticker mappings, seeded from a real DEGIRO export.
-# European ETFs/ETCs and multi-listing shares are deliberately left unmapped —
-# a full ISIN resolver (OpenFIGI, exchange-aware yfinance search, ...) is out
-# of scope for Epic 1's deterministic parser and belongs with Epic 2's
-# yfinance_fundamentals tool.
+# Known single-stock ISIN -> ticker mappings — a fast, zero-network first
+# tier checked before falling back to `isin_resolver.py`'s OpenFIGI lookup
+# for anything not covered here. Also serves as an authoritative override
+# for any ISIN where the live resolver's exchange-priority heuristics might
+# otherwise pick a less-preferred (but still valid) cross-listing.
 ISIN_TO_TICKER: dict[str, str] = {
     "US70450Y1038": "PYPL",
     "US00724F1012": "ADBE",
@@ -121,9 +122,16 @@ def _build_transactions(df: pd.DataFrame, broker: str) -> tuple[list[Transaction
     Shared by the deterministic DEGIRO path and Epic 3's broker_llm.py LLM
     fallback path — this function only knows the internal schema, never any
     broker-specific header text.
+
+    Ticker resolution happens in two phases so `isin_resolver.py`'s OpenFIGI
+    lookup can run as one batched call per parse rather than once per row:
+    phase A parses every row and notes which ISINs the static ISIN_TO_TICKER
+    table missed; phase B resolves all of those misses in a single call;
+    phase C builds the Transactions using the merged static+resolved mapping.
     """
-    transactions: list[Transaction] = []
+    parsed_rows: list[dict] = []
     skipped_rows: list[dict] = []
+    missing_isin_currency: dict[str, str | None] = {}
 
     for raw_row in df.to_dict(orient="records"):
         row = scrub_row(raw_row)
@@ -149,33 +157,43 @@ def _build_transactions(df: pd.DataFrame, broker: str) -> tuple[list[Transaction
 
         price_local = _parse_decimal(row["price_local"]) or Decimal("0")
         total_eur = _parse_decimal(row["total_eur"]) or Decimal("0")
-        ticker = ISIN_TO_TICKER.get(isin)
+        price_currency = row["price_currency"] or row["local_currency"] or "EUR"
+
+        if isin not in ISIN_TO_TICKER:
+            missing_isin_currency[isin] = price_currency
+
+        parsed_rows.append(
+            {
+                "isin": isin,
+                "product_name": row["product_name"],
+                "trade_date": trade_date,
+                "trade_time": trade_time,
+                "quantity": quantity,
+                "price_local": price_local,
+                "price_currency": price_currency,
+                "local_value": _parse_decimal(row["local_value"]) or Decimal("0"),
+                "value_eur": _parse_decimal(row["value_eur"]) or Decimal("0"),
+                "exchange_rate": _parse_decimal(row["exchange_rate"]),
+                "fees_eur": _parse_decimal(row["fees_eur"]) or Decimal("0"),
+                "total_eur": total_eur,
+                "is_corporate_action": (price_local == 0 and total_eur == 0),
+            }
+        )
+
+    resolved = isin_resolver.resolve_isins(missing_isin_currency) if missing_isin_currency else {}
+
+    transactions: list[Transaction] = []
+    for parsed in parsed_rows:
+        isin = parsed["isin"]
+        ticker = ISIN_TO_TICKER.get(isin) or resolved.get(isin)
 
         if ticker is None:
             logger.warning(
                 "No ticker mapping for ISIN %s (%s); leaving ticker=None",
-                isin, row["product_name"],
+                isin, parsed["product_name"],
             )
 
-        transactions.append(
-            Transaction(
-                isin=isin,
-                ticker=ticker,
-                product_name=row["product_name"],
-                broker=broker,
-                trade_date=trade_date,
-                trade_time=trade_time,
-                quantity=quantity,
-                price_local=price_local,
-                price_currency=row["price_currency"] or row["local_currency"] or "EUR",
-                local_value=_parse_decimal(row["local_value"]) or Decimal("0"),
-                value_eur=_parse_decimal(row["value_eur"]) or Decimal("0"),
-                exchange_rate=_parse_decimal(row["exchange_rate"]),
-                fees_eur=_parse_decimal(row["fees_eur"]) or Decimal("0"),
-                total_eur=total_eur,
-                is_corporate_action=(price_local == 0 and total_eur == 0),
-            )
-        )
+        transactions.append(Transaction(ticker=ticker, broker=broker, **parsed))
 
     return transactions, skipped_rows
 

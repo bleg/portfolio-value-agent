@@ -9,11 +9,18 @@ import pandas as pd
 import pytest
 
 from src import db_controller
-from src.parsers import fx
+from src.parsers import fx, isin_resolver
 from src.parsers.base_parser import _parse_decimal, parse_degiro_csv
 from src.parsers.pii_scrubber import scrub_row
 
 FIXTURE = Path(__file__).parent / "fixtures" / "degiro_sample.csv"
+
+
+@pytest.fixture(autouse=True)
+def _stub_isin_resolver(monkeypatch):
+    """Without this, any fixture ISIN missing from the static ISIN_TO_TICKER
+    table would trigger a real OpenFIGI/yfinance network call during tests."""
+    monkeypatch.setattr(isin_resolver, "resolve_isins", lambda isin_currency_map: {})
 
 ORDER_IDS = [
     "11111111-1111-1111-1111-111111111111",

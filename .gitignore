@@ -9,6 +9,7 @@ sample_transactions/
 *.db
 telemetry.jsonl
 schema_cache.json
+isin_cache.json
 
 # Python
 __pycache__/

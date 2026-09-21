@@ -31,7 +31,7 @@ def main() -> None:
 
     unmapped = sorted({t.isin for t in transactions if t.ticker is None})
     if unmapped:
-        print(f"\n{len(unmapped)} ISIN(s) with no ticker mapping (expected — see ISIN_TO_TICKER):")
+        print(f"\n{len(unmapped)} ISIN(s) with no ticker mapping (static table + OpenFIGI resolver both missed):")
         for isin in unmapped:
             print(f"  {isin}")
 
