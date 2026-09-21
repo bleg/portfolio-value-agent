@@ -5,9 +5,6 @@ engine (the agents built in later epics). Every tool is wrapped in
 `resilience.resilient_tool` for retry-with-backoff + a hard timeout; on
 exhaustion the wrapper fires `mcp_tool_failure` telemetry and raises
 `McpToolError`.
-
-`historical_db_read` is intentionally not implemented here — it depends on
-`db_controller.py`, which doesn't exist until Epic 7.
 """
 
 from __future__ import annotations
@@ -27,6 +24,7 @@ if __name__ == "__main__":
     # the sys.path bootstrap already used by scripts/run_epic1_demo.py.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src import db_controller
 from src.resilience import resilient_tool
 
 mcp = MCPServer("portfolio-value-agent")
@@ -190,6 +188,13 @@ def duckduckgo_search(query: str, ticker: str | None = None, max_results: int = 
         for r in raw_results
     ]
     return {"query": query, "results": results}
+
+
+@mcp.tool()
+@resilient_tool(tool_name="historical_db_read")
+def historical_db_read(user_id: str, limit: int = 5) -> dict:
+    """Scoped, parameterized read of past audit runs for `user_id` (no LLM SQL generation)."""
+    return {"user_id": user_id, "audits": db_controller.read_audits_for_user(user_id, limit)}
 
 
 if __name__ == "__main__":

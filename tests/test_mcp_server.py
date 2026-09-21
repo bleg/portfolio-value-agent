@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from src import mcp_server
+from src import db_controller, mcp_server
 from src.resilience import MAX_ATTEMPTS, McpToolError, resilient_tool
 
 # --- shared fixtures -------------------------------------------------------
@@ -24,15 +23,13 @@ def _reset_cik_cache(monkeypatch):
 
 @pytest.fixture
 def telemetry_path(tmp_path, monkeypatch) -> Path:
-    path = tmp_path / "telemetry.jsonl"
-    monkeypatch.setattr("src.telemetry.DEFAULT_LOG_PATH", path)
+    path = tmp_path / "test.db"
+    monkeypatch.setattr("src.db_controller.DEFAULT_DB_PATH", path)
     return path
 
 
 def _events(telemetry_path: Path) -> list[dict]:
-    if not telemetry_path.exists():
-        return []
-    return [json.loads(line) for line in telemetry_path.read_text().splitlines()]
+    return db_controller.read_telemetry_events(db_path=telemetry_path)
 
 
 class FakeInfoTicker:

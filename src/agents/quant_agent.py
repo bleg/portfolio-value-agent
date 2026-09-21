@@ -35,7 +35,7 @@ from typing import NamedTuple
 
 from src import mcp_server, telemetry
 from src.parsers.fx import get_fx_history
-from src.state import Holding, PortfolioState, QuantMetrics, Transaction
+from src.state import Holding, PortfolioState, QuantMetrics, Transaction, ValueHistoryPoint
 
 DEFAULT_BENCHMARK_TICKER = "^GSPC"
 
@@ -154,7 +154,14 @@ def run_quant_agent(
         benchmark_data["price_history"], first_txn_date, resolved_as_of
     )
 
-    twr_pct = _compute_twr(ticker_txns, price_histories, currencies, fx_histories, resolved_as_of)
+    twr_pct, value_history = _compute_value_history(
+        ticker_txns,
+        price_histories,
+        currencies,
+        fx_histories,
+        benchmark_data["price_history"],
+        resolved_as_of,
+    )
 
     quant_metrics = QuantMetrics(
         as_of=resolved_as_of,
@@ -167,6 +174,7 @@ def run_quant_agent(
         benchmark_ticker=benchmark_ticker,
         benchmark_return_pct=benchmark_return_pct,
         unresolved_isins=unresolved_isins,
+        value_history=value_history,
     )
 
     telemetry.log_event("benchmark_compared", twr=twr_pct, benchmark_return=benchmark_return_pct)
@@ -281,30 +289,39 @@ def _portfolio_value_eur(
     return total
 
 
-def _compute_twr(
+def _compute_value_history(
     ticker_txns: dict[str, list[Transaction]],
     price_histories: dict[str, list[dict]],
     currencies: dict[str, str],
     fx_histories: dict[str, list[dict]],
+    benchmark_price_history: list[dict],
     as_of: date,
-) -> float:
+) -> tuple[float, list[ValueHistoryPoint]]:
     """Sub-period (chain-linked) TWR, using external-cash-flow dates as
-    breakpoints. Corporate-action rows (`total_eur == 0`) don't get their own
-    breakpoint — they just change quantity, which is picked up automatically
-    by the position snapshot at the next real breakpoint.
+    breakpoints, plus the Epic 7 Portfolio-vs-benchmark chart data (both
+    series rebased to 100 at the first breakpoint). Corporate-action rows
+    (`total_eur == 0`) don't get their own breakpoint — they just change
+    quantity, which is picked up automatically by the position snapshot at
+    the next real breakpoint.
 
     The first breakpoint is only ever used as a sub-period's `start`, never
     an `end` — there's no "value before the first cash flow" to compute a
-    return over, so the inception boundary needs no special-casing.
+    return over, so the inception boundary needs no special-casing beyond
+    seeding `history` with the 100/100 anchor point.
     """
     cash_flow_dates = {
         t.trade_date for txns in ticker_txns.values() for t in txns if t.total_eur != 0
     }
     breakpoints = sorted(cash_flow_dates | {as_of})
     if len(breakpoints) < 2:
-        return 0.0
+        return 0.0, []
+
+    benchmark_start = _value_on_or_before(benchmark_price_history, breakpoints[0])
 
     twr = Decimal("1")
+    history = [
+        ValueHistoryPoint(date=breakpoints[0], portfolio_index=100.0, benchmark_index=100.0)
+    ]
     for start, end in zip(breakpoints, breakpoints[1:]):
         start_positions = {
             ticker: pos.quantity
@@ -318,10 +335,18 @@ def _compute_twr(
         }
         v_start = _portfolio_value_eur(start_positions, start, price_histories, currencies, fx_histories)
         v_end = _portfolio_value_eur(end_positions, end, price_histories, currencies, fx_histories)
-        if v_start == 0:
-            continue
-        twr *= v_end / v_start
-    return float(twr - 1)
+        if v_start != 0:
+            twr *= v_end / v_start
+
+        benchmark_end = _value_on_or_before(benchmark_price_history, end)
+        history.append(
+            ValueHistoryPoint(
+                date=end,
+                portfolio_index=float(twr * 100),
+                benchmark_index=float(benchmark_end / benchmark_start * 100),
+            )
+        )
+    return float(twr - 1), history
 
 
 def _compute_benchmark_return(price_history: list[dict], first_txn_date: date, as_of: date) -> float:

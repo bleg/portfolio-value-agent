@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import date, time
 from decimal import Decimal
 from pathlib import Path
@@ -8,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src import mcp_server
+from src import db_controller, mcp_server
 from src.agents import quant_agent
 from src.agents.quant_agent import InsufficientHoldingsError, run_quant_agent
 from src.parsers import fx
@@ -25,15 +24,13 @@ def _no_real_sleep(monkeypatch):
 
 @pytest.fixture
 def telemetry_path(tmp_path, monkeypatch) -> Path:
-    path = tmp_path / "telemetry.jsonl"
-    monkeypatch.setattr("src.telemetry.DEFAULT_LOG_PATH", path)
+    path = tmp_path / "test.db"
+    monkeypatch.setattr("src.db_controller.DEFAULT_DB_PATH", path)
     return path
 
 
 def _events(telemetry_path: Path) -> list[dict]:
-    if not telemetry_path.exists():
-        return []
-    return [json.loads(line) for line in telemetry_path.read_text().splitlines()]
+    return db_controller.read_telemetry_events(db_path=telemetry_path)
 
 
 def _history_df(dates: list[str], closes: list[float]) -> pd.DataFrame:
@@ -153,6 +150,11 @@ def test_buy_and_hold_eur_only(monkeypatch, telemetry_path):
     assert metrics.twr_pct == pytest.approx(0.20)
     assert metrics.benchmark_return_pct == pytest.approx(0.05)
     assert metrics.unresolved_isins == []
+
+    assert metrics.value_history[0].portfolio_index == pytest.approx(100.0)
+    assert metrics.value_history[0].benchmark_index == pytest.approx(100.0)
+    assert metrics.value_history[-1].portfolio_index / 100 - 1 == pytest.approx(metrics.twr_pct)
+    assert metrics.value_history[-1].benchmark_index == pytest.approx(105.0)
 
     failures = [e for e in _events(telemetry_path) if e["event"] == "mcp_tool_failure"]
     assert failures == []

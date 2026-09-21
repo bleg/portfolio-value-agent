@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src import db_controller
 from src.parsers import fx
 from src.parsers.base_parser import _parse_decimal, parse_degiro_csv
 from src.parsers.pii_scrubber import scrub_row
@@ -24,8 +25,8 @@ ORDER_IDS = [
 
 @pytest.fixture
 def parsed(tmp_path, monkeypatch):
-    telemetry_path = tmp_path / "telemetry.jsonl"
-    monkeypatch.setattr("src.telemetry.DEFAULT_LOG_PATH", telemetry_path)
+    telemetry_path = tmp_path / "test.db"
+    monkeypatch.setattr("src.db_controller.DEFAULT_DB_PATH", telemetry_path)
     portfolio = parse_degiro_csv(FIXTURE)
     return portfolio, telemetry_path
 
@@ -102,7 +103,7 @@ def test_order_id_never_reaches_portfolio_state(parsed):
 
 def test_portfolio_ingested_event_fires_once(parsed):
     _, telemetry_path = parsed
-    events = [json.loads(line) for line in telemetry_path.read_text().splitlines()]
+    events = db_controller.read_telemetry_events(db_path=telemetry_path)
     ingested = [e for e in events if e["event"] == "portfolio_ingested"]
     assert len(ingested) == 1
     assert ingested[0]["transaction_count"] == 5

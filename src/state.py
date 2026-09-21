@@ -58,6 +58,17 @@ class Holding(BaseModel):
     fcf_yield: float | None
 
 
+class ValueHistoryPoint(BaseModel):
+    """One TWR breakpoint's rebased index value (Epic 7's Portfolio vs
+    benchmark chart). Both indices start at 100 at the first breakpoint so
+    they're directly comparable regardless of absolute portfolio size vs.
+    index level."""
+
+    date: date
+    portfolio_index: float
+    benchmark_index: float
+
+
 class QuantMetrics(BaseModel):
     """Deterministic valuation output of Epic 4's quant_agent. No LLM ever
     computes a number here (CLAUDE.md Section 3C).
@@ -77,6 +88,7 @@ class QuantMetrics(BaseModel):
     benchmark_ticker: str
     benchmark_return_pct: float
     unresolved_isins: list[str]
+    value_history: list[ValueHistoryPoint] = []
 
 
 class ToolCallRecord(BaseModel):

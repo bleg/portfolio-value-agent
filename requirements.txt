@@ -19,3 +19,6 @@ langchain>=1.0,<2
 langchain-core>=1.6,<2
 langchain-openai>=1.6,<2
 langsmith>=0.13,<1
+sqlalchemy
+streamlit
+plotly
