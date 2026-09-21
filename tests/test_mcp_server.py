@@ -105,6 +105,37 @@ def test_yfinance_fundamentals_bad_ticker_retries_and_logs_failure(monkeypatch, 
     assert failures[0]["ticker"] == "BADTICKER"
 
 
+def test_yfinance_fundamentals_degrades_when_info_is_crumb_blocked(monkeypatch, telemetry_path):
+    """A real ticker whose `.info` call is rate-limited (Yahoo's crumb auth,
+    routinely exhausted on shared cloud hosts) returns empty `.info` even
+    though the ticker is valid and `.history()` still resolves - distinct
+    from a genuinely bad ticker, where both calls come back empty."""
+
+    class CrumbBlockedTicker:
+        def __init__(self, ticker: str) -> None:
+            self.info = {}
+            self.cashflow = pd.DataFrame()
+
+        def history(self, period: str, timeout: float) -> pd.DataFrame:
+            idx = pd.date_range("2026-09-01", periods=2, freq="D")
+            return pd.DataFrame({"Close": [100.0, 101.5]}, index=idx)
+
+    monkeypatch.setattr(mcp_server, "yf", FakeYfModule(CrumbBlockedTicker))
+
+    result = mcp_server.yfinance_fundamentals("AAPL")
+
+    assert result["ticker"] == "AAPL"
+    assert result["pe_ratio"] is None
+    assert result["pb_ratio"] is None
+    assert result["debt_to_equity"] is None
+    assert result["fcf_yield"] is None
+    assert result["price_history"] == [
+        {"date": "2026-09-01", "close": 100.0},
+        {"date": "2026-09-02", "close": 101.5},
+    ]
+    assert _events(telemetry_path) == []
+
+
 # --- benchmark_data_fetcher --------------------------------------------------
 
 

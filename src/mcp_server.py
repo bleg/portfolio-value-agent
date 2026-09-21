@@ -39,8 +39,8 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _price_history(ticker: str, period: str, timeout: float) -> list[dict]:
-    history = yf.Ticker(ticker).history(period=period, timeout=timeout)
+def _price_history(t, period: str, timeout: float) -> list[dict]:
+    history = t.history(period=period, timeout=timeout)
     return [
         {"date": index.date().isoformat(), "close": round(float(row["Close"]), 4)}
         for index, row in history.iterrows()
@@ -50,31 +50,50 @@ def _price_history(ticker: str, period: str, timeout: float) -> list[dict]:
 @mcp.tool()
 @resilient_tool(tool_name="yfinance_fundamentals")
 def yfinance_fundamentals(ticker: str, history_period: str = "6mo") -> dict:
-    """P/E, P/B, Debt-to-Equity, FCF Yield, and historical close prices for `ticker`."""
+    """P/E, P/B, Debt-to-Equity, FCF Yield, and historical close prices for `ticker`.
+
+    `.info` and `.history()` hit separate Yahoo endpoints with different auth
+    requirements: `.info` needs a "crumb" token that Yahoo rate-limits per-IP
+    (routinely exhausted on shared cloud hosts like Streamlit Community
+    Cloud), while the `/v8/finance/chart` endpoint behind `.history()` does
+    not. So `.info` failing doesn't mean the ticker is invalid - only that
+    fundamentals are temporarily unavailable. Degrade to `None` fundamentals
+    rather than failing the whole call whenever price history still resolves;
+    `quant_agent.py` prices holdings off `price_history` already (not
+    `.info`), and `_weighted_pe`/`risk_agent.detect_anomalies` already treat
+    `None` fields as "skip this holding for that metric".
+    """
     t = yf.Ticker(ticker)
-    info = t.info
-    if not info.get("regularMarketPrice") and not info.get("shortName"):
+    price_history = _price_history(t, history_period, timeout=5.0)
+
+    try:
+        info = t.info
+    except Exception:
+        info = {}
+    has_fundamentals = bool(info.get("regularMarketPrice") or info.get("shortName"))
+
+    if not has_fundamentals and not price_history:
         raise ValueError(f"No data available for ticker {ticker!r}")
 
-    market_cap = info.get("marketCap")
-    free_cash_flow = info.get("freeCashflow")
-    if free_cash_flow is None:
-        try:
-            free_cash_flow = float(t.cashflow.loc["Free Cash Flow"].iloc[0])
-        except (KeyError, IndexError, TypeError):
-            free_cash_flow = None
-
     fcf_yield = None
-    if free_cash_flow is not None and market_cap:
-        fcf_yield = round(float(free_cash_flow) / float(market_cap), 4)
+    if has_fundamentals:
+        market_cap = info.get("marketCap")
+        free_cash_flow = info.get("freeCashflow")
+        if free_cash_flow is None:
+            try:
+                free_cash_flow = float(t.cashflow.loc["Free Cash Flow"].iloc[0])
+            except Exception:
+                free_cash_flow = None
+        if free_cash_flow is not None and market_cap:
+            fcf_yield = round(float(free_cash_flow) / float(market_cap), 4)
 
     return {
         "ticker": ticker,
-        "pe_ratio": info.get("trailingPE"),
-        "pb_ratio": info.get("priceToBook"),
-        "debt_to_equity": info.get("debtToEquity"),
+        "pe_ratio": info.get("trailingPE") if has_fundamentals else None,
+        "pb_ratio": info.get("priceToBook") if has_fundamentals else None,
+        "debt_to_equity": info.get("debtToEquity") if has_fundamentals else None,
         "fcf_yield": fcf_yield,
-        "price_history": _price_history(ticker, history_period, timeout=5.0),
+        "price_history": price_history,
         "as_of": _now_iso(),
     }
 
@@ -83,7 +102,7 @@ def yfinance_fundamentals(ticker: str, history_period: str = "6mo") -> dict:
 @resilient_tool(tool_name="benchmark_data_fetcher")
 def benchmark_data_fetcher(ticker: str = "^GSPC", history_period: str = "1y") -> dict:
     """Historical price series for a benchmark index (S&P 500 `^GSPC`, MSCI World `URTH`)."""
-    price_history = _price_history(ticker, history_period, timeout=5.0)
+    price_history = _price_history(yf.Ticker(ticker), history_period, timeout=5.0)
     if not price_history:
         raise ValueError(f"No benchmark data available for {ticker!r}")
     return {
