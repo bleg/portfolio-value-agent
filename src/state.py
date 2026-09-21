@@ -125,6 +125,34 @@ class RiskReport(BaseModel):
     performance_attribution: PerformanceAttribution
 
 
+class SupervisorError(BaseModel):
+    """An unrecoverable failure caught at Epic 6's Supervisor boundary
+    (supervisor.quant_node/risk_node), rather than left to propagate and
+    crash the graph. `error_type` is what the routing functions switch on;
+    `message` is the human-readable text rendered into the final report."""
+
+    stage: Literal["quant", "risk"]
+    error_type: Literal[
+        "insufficient_holdings",
+        "mcp_tool_error",
+        "value_error",
+        "missing_quant_metrics",
+        "risk_agent_failure",
+    ]
+    message: str
+
+
+class HitlRecord(BaseModel):
+    """A *resolved* Human-In-The-Loop breakpoint (Epic 6). Only ever
+    constructed after the human's decision is known - PortfolioState never
+    holds a HitlRecord while a graph run is paused mid-interrupt, only after
+    resume - so `decision` is required, not Optional."""
+
+    reason: Literal["unresolved_isins", "insufficient_holdings"]
+    details: str
+    decision: Literal["approve", "abort"]
+
+
 class PortfolioState(TypedDict, total=False):
     transactions: list[Transaction]
     broker: str
@@ -132,3 +160,7 @@ class PortfolioState(TypedDict, total=False):
     skipped_rows: list[dict]
     quant_metrics: QuantMetrics
     risk_report: RiskReport
+    quant_error: SupervisorError
+    risk_error: SupervisorError
+    hitl_record: HitlRecord
+    report_markdown: str
