@@ -236,6 +236,51 @@ def test_mid_period_buy_sell_across_currency(monkeypatch, telemetry_path):
     assert metrics.twr_pct != pytest.approx(metrics.net_return_pct)
 
 
+def test_gbx_pence_currency_converts_via_real_gbp_pair(monkeypatch):
+    """DEGIRO reports UK line items in GBX (pence), not a real ISO currency
+    - there's no "EURGBX=X" pair on Yahoo. yfinance's own UK (.L) closes are
+    also pence-denominated, so conversion needs the real EURGBP pair plus a
+    100x pence-to-pounds scale, applied only to the FX leg."""
+    transactions = [
+        _txn(
+            isin="TESTGBX0001",
+            ticker="GGG.L",
+            trade_date=date(2024, 1, 1),
+            quantity=10,
+            price_currency="GBX",
+            total_eur="-80.00",
+        ),
+    ]
+    fake_yf = _make_fake_yf(
+        {
+            "GGG.L": {
+                "info": {"regularMarketPrice": 850.0, "trailingPE": 15.0},
+                "history": _history_df(["2024-01-01", "2024-07-01"], [850.0, 850.0]),
+            },
+            "^GSPC": {
+                "history": _history_df(["2024-01-01", "2024-07-01"], [4000.0, 4400.0]),
+            },
+        }
+    )
+    fake_fx = _make_fake_yf(
+        {
+            "EURGBP=X": {
+                "history": _history_df(["2024-01-01", "2024-07-01"], [0.85, 0.85]),
+            },
+        }
+    )
+    monkeypatch.setattr(mcp_server, "yf", fake_yf)
+    monkeypatch.setattr(fx, "yf", fake_fx)
+
+    state = run_quant_agent({"transactions": transactions}, as_of=date(2024, 7, 1))
+    metrics = state["quant_metrics"]
+
+    holding = metrics.holdings[0]
+    # 850 GBX = 8.50 GBP; 8.50 / 0.85 (EURGBP rate) = 10.00 EUR.
+    assert holding.current_price_eur == Decimal("10.00")
+    assert holding.market_value_eur == Decimal("100.00")
+
+
 # --- guardrails and edge cases ----------------------------------------------
 
 

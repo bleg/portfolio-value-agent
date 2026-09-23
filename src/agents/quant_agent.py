@@ -15,10 +15,11 @@ Known limitations:
   excluded from valuation and TWR cash-flow breakpoints entirely — their cash
   flows aren't represented in the computed metrics.
 - `_fx_pair` assumes `Transaction.price_currency` is a standard ISO 4217 code
-  usable directly in a yfinance pair (e.g. "USD" -> "EURUSD=X"). DEGIRO can
-  report UK line items in GBX (pence), which this does not special-case —
-  deferred alongside the roadmap's other multi-broker currency-convention
-  work (see epics_roadmap.md's Epic 3 deferred note).
+  usable directly in a yfinance pair (e.g. "USD" -> "EURUSD=X"), with one
+  named exception: DEGIRO reports UK line items in GBX (pence, not a real
+  ISO currency) - `_fx_pair`/`_price_eur_on` special-case it via the real
+  EURGBP pair plus a 100x pence-to-pounds scale. Any other non-standard
+  currency convention a future broker adapter introduces isn't handled yet.
 
 `McpToolError` (exhausted MCP-tool/FX-history retries) and `ValueError` /
 `InsufficientHoldingsError` (data-integrity guardrails) are allowed to
@@ -253,8 +254,17 @@ def _value_on_or_before(series: list[dict], on_date: date) -> Decimal:
     return Decimal(str(latest["close"]))
 
 
+# 100 GBX (pence) = 1 GBP. GBX isn't a real ISO 4217 currency, so there's no
+# "EURGBX=X" pair on Yahoo — convert via the real EURGBP pair instead, then
+# apply this scale. yfinance's own UK (".L") ticker closes are already
+# pence-denominated too, matching DEGIRO's GBX-denominated transaction rows,
+# so only the FX leg needs this adjustment, not price_histories itself.
+_GBX_PER_GBP = Decimal("100")
+
+
 def _fx_pair(currency: str) -> str:
-    return f"EUR{currency}=X"
+    lookup_currency = "GBP" if currency == "GBX" else currency
+    return f"EUR{lookup_currency}=X"
 
 
 def _price_eur_on(
@@ -269,7 +279,10 @@ def _price_eur_on(
     if currency == "EUR":
         return native_price
     fx_rate = _value_on_or_before(fx_histories[currency], on_date)
-    return native_price / fx_rate
+    eur_price = native_price / fx_rate
+    if currency == "GBX":
+        eur_price /= _GBX_PER_GBP
+    return eur_price
 
 
 def _portfolio_value_eur(
